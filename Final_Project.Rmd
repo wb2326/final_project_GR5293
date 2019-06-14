@@ -1,0 +1,497 @@
+---
+title: <center> <h1>Project Report</h1></center>
+author: <center> <h3>Sixing Hao, Weijia Bao</h3></center>
+output: 
+  html_document:
+    code_folding: hide 
+---
+```{r, include=FALSE}
+library(tidyverse)
+library(stringr)
+library(gridExtra)
+library(visdat)
+library(lubridate)
+library(plotly)
+library(dplyr)
+library(choroplethr)
+library(devtools)
+#install_github('arilamstein/choroplethrZip@v1.5.0')
+library(choroplethrZip)
+library(GGally)
+```
+
+# Introduction
+
+New York, as one of the most famous cities throughout the world, is well-known for a lot of things. Among all, food is a topic that everyone loves. In New York, there’s almost nothing you can’t find. From Michelin restaurants, to street-side exotic food trucks, one can always find his/hers favorite. While we’re enjoying our favorite dish, there’s one issue we must not ignore: How clean are these foods? 
+
+## Description of the data source
+
+The data being used in this project is the inspection result of New York City Restaurants, which is conducted by Department of Mental Health and Hygiene. The data consists of 18 columns, including Restaurant’s name, cuisine type, address, inspection dates & results, and sanity grading. The data is downloaded from NYC Open Data, and by the time of download, it contains 384,408 rows, representing the result of 384,408 inspections on restaurants all over New York city. This is a very comprehensive dataset, but with many NA’s included. After cleaning all NAs, there’s only 187,591 records left. On the other hand, there’re some noticeable issues, such as labeling a chain restaurant with different cuisine types. But overall, this is a very thorough and informative dataset.
+
+## Description of data import/cleaning/transformation
+
+The raw data is being imported as res_raw, mainly for missing value analysis. Since the amount of data is sufficiently large, we could still have an informative dataset, even if all rows containing NA are removed, and this is the res dataset. Notice that this dataset contains multiple inspection results for same restaurants at different time. Thus, we filtered and kept the latest record for every restaurant, and named it res_one. 
+
+```{r warning=FALSE}
+# Omitting rows with NA, parsed date format
+res <- read_csv(
+  "restaurant_data.csv",
+  col_types = cols(
+    `INSPECTION DATE` = col_date(format = "%m / %d / %Y"),
+    `GRADE DATE` = col_date(format = "%m / %d / %Y"),
+    `RECORD DATE` = col_date(format = "%m / %d / %Y")
+  )
+) %>% na.omit(res) %>% filter(BORO != "Missing")
+# replace names that are too long
+res$`CUISINE DESCRIPTION` <-
+  gsub(
+    "Latin \\(Cuban, Dominican, Puerto Rican, South & Central American\\)",
+    "Latin",
+    res$`CUISINE DESCRIPTION`
+  )
+
+res$`CUISINE DESCRIPTION` <-
+  gsub(
+    "Bottled beverages, including water, sodas, juices, etc.",
+    "Bottled beverages",
+    res$`CUISINE DESCRIPTION`
+  )
+
+res$`CUISINE DESCRIPTION` <-
+  gsub(
+    "CafÃ©/Coffee/Tea",
+    "Cafe/Coffee/Tea",
+    res$`CUISINE DESCRIPTION`
+  )
+# Latest record for same restaurant
+res_one <-
+  arrange(res, desc(`GRADE DATE`)) %>% distinct(CAMIS, .keep_all = TRUE)
+```
+### Missing Value Analysis
+
+```{r, message=FALSE, warning=FALSE}
+res_raw <- read_csv("restaurant_data.csv", col_types = cols(
+    `INSPECTION DATE` = col_date(format = "%m / %d / %Y")
+  ))
+vis_miss(res_raw, warn_large_data = FALSE)+coord_flip()
+```
+
+The dataset contains many NAs. Most of the columns contains less than 5% of NA, but two columns appear to have huge number of NAs, which are GRADE (49.49%) and GRADE DATE (50.02%). From plot, there seems to be a relationship between missing values in both rows. Almost all rows with missing value in GRADE, also have nothing in GRADE DATE as well. However, there are only less than 5% NAs in SCORE, which is supposed to be the grading criteria. In most cases, grades are given, based on how many points the restaurant lost during the inspection. Thus, having a row with score but no grade seems abnormal. 
+
+```{r warning=FALSE}
+res_count <- res_raw %>%
+  group_by(`Month` = floor_date(`INSPECTION DATE`, "month")) %>%tally() %>% filter(Month != "1900-01-01")
+res_count <- res_count[-seq(1,16),]
+res_na <- res_raw %>% filter(is.na(GRADE))%>%
+  group_by(`Month` = floor_date(`INSPECTION DATE`, "month")) %>%tally() %>% filter(Month != "1900-01-01")
+res_na <- res_na[-seq(1,10),]
+na_rate <- res_na$n/res_count$n
+res_na$total <- res_count$n
+colnames(res_na) <- c("Month","NAs","Total_Count")
+res_na <- gather(res_na,"Total/NAs","count",2:3)
+p1 <- ggplot(res_na, aes(x = `Month`, y = count , color = `Total/NAs`)) +
+  geom_point() +
+  geom_line() +
+  ggtitle("NAs by month")
+ggplotly(p1)
+```
+The dataset contains many NAs. Most of the columns contains less than 5% of NA, but two columns appear to have huge number of NAs, which are GRADE (49.49%) and GRADE DATE (50.02%). From plot, there seems to be a relationship between missing values in both rows. Almost all rows with missing value in GRADE, also have nothing in GRADE DATE as well. However, there are only less than 5% NAs in SCORE, which is supposed to be the grading criteria. In most cases, grades are given, based on how many points the restaurant lost during the inspection. Thus, having a row with score but no grade seems abnormal. 
+By inspecting the dataset, we discovered that, for rows without NAs, INSPECTION DATE and GRADE DATE are exactly the same. As a result, we’re able to analyze the number of NAs appeared each month. From plot, we can conclude that, the number of NAs appeared to be roughly half of the total amount of inspections in that month.
+
+# Results
+
+Before digging into the details of food safety, let’s first take a look at the general distribution of various genres of restaurants. Based on data, there are 84 different types of cuisine in New York City. Although there are some overlapping and mis-classified cases, this number is still much higher than our imagination. To be honest, it’s rather difficult to name more than 30 different types of cuisine. Thus 84 is indeed an astonishingly large amount.
+
+```{r warning=FALSE,message=FALSE}
+# not omitting NAs, to include as much restaurants as possible
+res_unique <- read_csv("restaurant_data.csv")[, 1:8] %>% distinct() %>% filter(BORO != "Missing")
+res_unique$`CUISINE DESCRIPTION` <-
+  gsub(
+    "Latin \\(Cuban, Dominican, Puerto Rican, South & Central American\\)",
+    "Latin",
+    res_unique$`CUISINE DESCRIPTION`
+  )
+
+res_unique$`CUISINE DESCRIPTION` <-
+  gsub(
+    "Bottled beverages, including water, sodas, juices, etc.",
+    "Bottled beverages",
+    res_unique$`CUISINE DESCRIPTION`
+  )
+res_unique$`CUISINE DESCRIPTION` <-
+  gsub(
+    "CafÃ©/Coffee/Tea",
+    "Cafe/Coffee/Tea",
+    res_unique$`CUISINE DESCRIPTION`
+  )
+
+res_top20 <- res_unique %>% group_by(`CUISINE DESCRIPTION`) %>% tally()%>% top_n(20)
+t1 <- ggplot(res_top20) +
+  geom_point(aes(x = reorder(`CUISINE DESCRIPTION`, n), y = n), stat = "identity") +
+  coord_flip()+ggtitle("Top 20 in NYC")+labs(x="Cuisine Types",y="Number")
+
+res_boro <- res_unique %>% group_by(BORO) %>% tally()
+t2 <- ggplot(res_boro) +
+  geom_bar(aes(x = reorder(`BORO`, n), y = n), stat = "identity")+
+  ggtitle("Number of restaurants in each boro")+labs(x="Borough",y="Number")+
+  theme(axis.text.x = element_text(angle = 10, hjust = 1))
+
+# top 9 cuisine types expluding "other"
+cuisine.top10 <- res_unique %>% group_by(`CUISINE DESCRIPTION`) %>% tally() %>% top_n(10)
+top10.type <- cuisine.top10$`CUISINE DESCRIPTION`
+top9.type <- top10.type[-9]
+
+res_boro_top9 <- res_unique %>% filter(`CUISINE DESCRIPTION`==top9.type) %>% group_by(BORO,`CUISINE DESCRIPTION`) %>% tally()
+
+t3 <- ggplot(res_boro_top9, aes(x = BORO,y = n,fill = BORO)) +
+  geom_bar(position = "dodge", stat = "identity") + ylab("") + 
+  facet_wrap( ~`CUISINE DESCRIPTION`, scales = "free") + 
+  theme(axis.title.x = element_blank(),axis.text.x = element_blank(),axis.ticks.x=element_blank())+
+  ggtitle("Top 9 Cuisine Types in NYC by boro")+labs(y="count")
+
+grid.arrange(t1, t2, nrow = 1)
+```
+
+The left-hand-side plot of top 20 cuisine types shows that American style restaurant in NYC is the most, more than doubling the number of Chinese restaurants, which is in the second place. This should not be surprising, as New York is in America. However, while cafes and pizza are common to American people, the number of Chinese restaurants is out of expectation. 
+
+On the right-hand-side, the plot shows how much restaurants are there in each borough. Clearly Manhattan has the most, and Queens and Brooklyn are fairly close. Bronx has only about one-fifth of Manhattans’, and Staten Island has even less. To get more details about the distribution of different genres of restaurants across boroughs, we created a new plot.
+
+```{r warning=FALSE,message=FALSE}
+ggplotly(t3)
+```
+
+
+This plot picked top 9 cuisine types in terms of restaurant counts, and is divided up by different borough. It’s interesting to see that, the distribution of each restaurant types across boroughs are not the same at all. Generally, Manhattan still has the highest number of restaurants in 6 out of 9 cuisine types. But there are some interesting patterns. For example, Brooklyn and Queens have more Chinese restaurants than Manhattan, and Queens have more Latino restaurants than any other boroughs. This might have some relationship with the demographics at each borough.  
+
+## Restaurants near Columbia University
+
+As a Columbia student, I’m very interested in how restaurants near Columbia are distributed. Here’s a plot of top 20 restaurant types near Columbia, comparing to top 20 in Manhattan.
+
+```{r warning=FALSE,message=FALSE}
+# Subsetting for restaurant near columbia
+res_columbia <- filter(
+  res_unique,
+  res_unique$ZIPCODE == 10025 |
+    res_unique$ZIPCODE == 10026 |
+    res_unique$ZIPCODE == 10027
+)%>% group_by(`CUISINE DESCRIPTION`) %>% tally() %>% arrange(desc(n))%>% top_n(20)
+
+res_manhattan <- filter(res_unique,BORO=="MANHATTAN")%>% group_by(`CUISINE DESCRIPTION`) %>% tally() %>% arrange(desc(n))%>% top_n(20)
+
+# cleveland dot plot
+p1 <- ggplot(res_columbia) +
+  geom_point(aes(x = reorder(`CUISINE DESCRIPTION`, n), y = n), stat = "identity") +
+  coord_flip()+labs(x="Cuisine Types",y="Number")+ggtitle("Top 20 Columbia")
+
+p2 <- ggplot(res_manhattan) +
+  geom_point(aes(x = reorder(`CUISINE DESCRIPTION`, n), y = n), stat = "identity") +
+  coord_flip()+labs(x="Cuisine Types",y="Number")+ggtitle("Top 20 Manhattan")
+
+grid.arrange(p1, p2, nrow = 1)
+```
+
+
+Columbia has more Chinese restaurants, and fast food such as hamburger, comparing to Manhattan’s top 20, which makes sense, as Columbia has many Chinese students, and students tend to prefer fast food over fine dining.
+
+## Heatmaps
+
+There’re always some occasions which, you want to hangout and find a decent restaurant, but have no target in mind. To figure out where’s the most restaurant-dense area, we plot a heat map based on zipcode-zones.
+
+```{r warning=FALSE,message=FALSE}
+# NYC zipmap
+res_zip <- res_unique %>% group_by(ZIPCODE) %>% summarise(number = n())
+colnames(res_zip) <- c("region", "value")
+res_zip$region <- as.character(res_zip$region)
+nyc_fips <- c(36005, 36047, 36061, 36081, 36085)
+h_nyc <- zip_choropleth(res_zip,
+               county_zoom = nyc_fips,
+               title      = "NYC Restaurant Heatmap",
+               legend     = "count")
+
+
+# Mexican zipmap
+res_mx_zip <-
+  res_one %>% filter(`CUISINE DESCRIPTION` == "Mexican") %>%
+  group_by(ZIPCODE) %>% summarise(number = n())
+colnames(res_mx_zip) <- c("region", "value")
+res_mx_zip$region <- as.character(res_mx_zip$region)
+
+h_mx <- zip_choropleth(
+  res_mx_zip,
+  county_zoom = nyc_fips,
+  title      = "Mexican Restaurant Heatmap",
+  legend     = "count"
+)
+
+
+grid.arrange(h_nyc, h_mx, nrow = 1)
+```
+
+From plot, downtown Manhattan, Bay-bridge in Brooklyn, and Flushing in Queens are the most restaurant-dense areas. If you are interested in a specific type of food, for example, Mexican food, you might want to go to areas like upper-east Manhattan, downtown Manhattan or Willamsburg Brooklyn, and avoid the black areas on the map, because either there isn’t any Mexican restaurant, or there is no Mexican restaurant with a proper health inspection grade. 
+
+## Analysis on Violations
+
+Next, we’ll get to know more about health inspection violations among restaurants in New York. Before talking about any specific restaurant, let’s first learn about the violations.
+
+```{r warning=FALSE,message=FALSE}
+# clean out the violations
+res_viotype <-
+  res %>% group_by(`VIOLATION DESCRIPTION`) %>% tally() %>% arrange(desc(n)) %>% top_n(10)
+# rename to make them shorter
+res_viotype$`VIOLATION DESCRIPTION` <-
+  c(
+    "Non-food contact surface improperly constructed (10F)",
+    "Facility not vermin proof (08A)",
+    "Food contact surface not properly washed, rinsed and sanitized (06D)",
+    "Food not protected from potential source of contamination (06C)",
+    "Plumbing not properly installed or maintained (10B)",
+    "Evidence of mice or live mice present (04L)",
+    "Cold food item held above 41ºF (02G)",
+    "Hot food item not held at or above 140ºF (02B)",
+    "Filth flies or food/refuse/sewage-associated flies present (04N)",
+    "Food contact surface not properly maintained (09C)"
+  )
+vio_1 <- ggplot(res_viotype, aes(x = `VIOLATION DESCRIPTION`, y = n)) +
+  geom_bar(stat = "identity") + coord_flip() + ggtitle("Top 10 violation reasons")+labs(x="",y="counts of violation")
+
+
+res_vioboro <-
+  res %>% group_by(`VIOLATION CODE`, `BORO`) %>% tally() %>% arrange(desc(n)) %>% group_by(BORO) %>% top_n(5)
+
+vio_2 <- ggplot(res_vioboro, aes(x = `VIOLATION CODE`, y = n)) +
+  geom_bar(stat = "identity") +
+  facet_wrap( ~ BORO, scales = "free") +
+  ggtitle("Top 5 violation reasons for each borough")
+
+grid.arrange(vio_1, vio_2, nrow = 2)
+```
+
+This left-hand-side plot showed the top 10 violations during the inspections. The most violated reason is called “non-food contact surface improperly constructed”, which refers to surfaces such as food carts, tools, clothes. Besides, there are more concerning violations, such as presence of filth flies and mice. Knowing that a restaurant has violations in these areas, we might want to find another restaurant instead. On the right-hand-side, the plot showed top 5 violations in each borough, and as it displayed, violations in each borough are about the same, in terms of proportion and ranking, with only slight changes.
+
+## Time Series Plot
+
+Let’s move on to time series plots showing the amount of each violation type by month from January 2017 to April 2019. All violation cases generally increased with time, while there were extreme ups and downs during 2018. Unfortunately, there were no food scandals nor inspection policy changes that match within this timeframe. 
+
+```{r message=FALSE,warning=FALSE}
+options(stringsAsFactors = FALSE)
+
+#filter date starting 2017-01
+res_ts <- res %>% filter(`INSPECTION DATE` >= "2017-01-01")
+#View(res)
+#group violation code by numeric part & rename
+res_ts <- res_ts %>%
+  mutate(`VIOLATION_CODE` = str_replace(`VIOLATION CODE`, "[A-Z]", "")) %>%
+  mutate(
+    `VIOLATION_CODE` = recode_factor(
+      `VIOLATION_CODE`,
+      "02" = "Food temperature",
+      "03" = "Raw material",
+      "04" = "KLMNO",
+      "05" = "Facilities",
+      "06" = "Hygiene",
+      "07" = "Interfering duty",
+      "08" = "Vermin",
+      "09" = "KLMNO",
+      "10" = "Dining environment"
+    )
+  )
+
+#violation type by month
+vio_month <- res_ts %>%
+  group_by(`Month` = floor_date(`INSPECTION DATE`, "month"), `VIOLATION_CODE`) %>%
+  summarize(count = n())
+
+g <- ggplot(vio_month, aes(x = `Month`, y = `count`, color = `VIOLATION_CODE`)) +
+  geom_point() +
+  geom_line() +
+  ggtitle("Violation Type By month",
+          "All 8 Violations") +
+  labs(x = "Jan 2017-Apr 2019")
+
+g<- ggplotly(g)
+g
+
+ft <- filter(vio_month, `VIOLATION_CODE` == "Food temperature") %>%
+  mutate(`Food temperature` = `count`) %>%
+  select(`Month`, `Food temperature`)
+
+rm <- filter(vio_month, `VIOLATION_CODE` == "Raw material") %>%
+  mutate(`Raw material` = `count`) %>%
+  select(`Month`, `Raw material`)
+fp <-
+  filter(vio_month,`VIOLATION_CODE` == "KLMNO") %>%
+  mutate(`KLMNO` = `count`) %>%
+  select(`Month`, `KLMNO`)
+f <- filter(vio_month, `VIOLATION_CODE` == "Facilities") %>%
+  mutate(`Facilities` = `count`) %>%
+  select(`Month`, `Facilities`)
+h <- filter(vio_month, `VIOLATION_CODE` == "Hygiene") %>%
+  mutate(`Hygiene` = `count`) %>%
+  select(`Month`, `Hygiene`)
+id <- filter(vio_month, `VIOLATION_CODE` == "Interfering duty") %>%
+  mutate(`Interfering duty` = `count`) %>%
+  select(`Month`, `Interfering duty`)
+v <- filter(vio_month, `VIOLATION_CODE` == "Vermin") %>%
+  mutate(`Vermin` = `count`) %>%
+  select(`Month`, `Vermin`)
+de <- filter(vio_month, `VIOLATION_CODE` == "Dining environment") %>%
+  mutate(`Dining environment` = `count`) %>%
+  select(`Month`, `Dining environment`)
+
+new_df <-
+  Reduce(function(x, y)
+    merge(x, y, all = TRUE), list(ft, rm, fp, f, h, id, v, de))
+```
+
+Zoom in on violations changes in each borough, we found Manhattan has most violations in most of the types except facilities, which makes sense because Manhattan has the largest number of restaurants. In fact, the number of violations in each type is proportional to the total amount of restaurants in each borough.
+
+```{r echo=FALSE,warning=FALSE,message=FALSE}
+#dinning environment by boro vs all vio_type by boro
+dinning_boro <- res_ts %>%
+  # filter(`VIOLATION_CODE`=="Dining environment") %>%
+  group_by(`Month` = floor_date(`INSPECTION DATE`, "month"), `BORO`, `VIOLATION_CODE`) %>%
+  summarise(count = n())
+
+gg <- ggplot(dinning_boro, aes(x = `Month`, y = `count`, color = `BORO`)) +
+  geom_point() +
+  geom_line() +
+  ggtitle("Violation by BORO") +
+  facet_wrap( ~ `VIOLATION_CODE`, scales = "free") +
+  theme(axis.text.x = element_text(angle = 20, hjust = 1))
+
+ggplotly(gg)
+```
+
+##Correlation Plot
+
+We also made a correlation plot between the eight violations and marked the correlation with absolute value greater than 0.05. 
+
+```{r warning=FALSE,message=FALSE}
+#corr plot
+ggcorr(new_df, geom = "blank", label = TRUE, hjust = 0.75) +
+  geom_point(size = 10, aes(color = coefficient > 0, alpha = abs(coefficient) > 0.5)) +
+  scale_alpha_manual(values = c("TRUE" = 0.25, "FALSE" = 0)) +
+  guides(color = FALSE, alpha = FALSE)
+```
+
+Many violation types are highly positive correlated. For example, Food preparation & storage/ rats and fly (KLMNO) and vermin has correlation coefficient close to 1, meaning there is a strong linear relationship between the two variables. Considering that rats and vermin thrive in similar environments where foods and shelter are available, restaurants that fight rats often battle with vermin. Interesting, interfering duty and presence of vermin are also positively correlated (0.6). Restaurants with vermin might be more likely to interfere duty to impede grading process, thus interfering duty would be a confounding variable.
+
+After understanding the violation reasons, we now focus on the grades. Here’s a plot with grading for top 10 most cuisine types.
+
+```{r warning=FALSE,message=FALSE}
+
+cuisine.top10 <-
+  res_one %>% group_by(`CUISINE DESCRIPTION`) %>% tally() %>% top_n(10)
+
+top10.type <- cuisine.top10$`CUISINE DESCRIPTION`
+
+res_gcuisine <-
+  res %>% filter(GRADE == c("A", "B", "C")) %>% 
+  filter(`CUISINE DESCRIPTION` ==top10.type) %>% 
+  group_by(`CUISINE DESCRIPTION`, GRADE) %>% tally()
+
+g1 <- ggplot(res_gcuisine, aes(x = `CUISINE DESCRIPTION`, y = n, fill = GRADE)) +
+  geom_bar(stat = "identity", position = "fill") + coord_flip() + 
+  labs(y ="Percentage", x = "cuisine type") + ggtitle("Percentile of Grade for Top 10 Cuisine Types")
+
+res_gzip <- res_one %>% filter(GRADE == c("A", "B", "C")) %>% 
+  group_by(ZIPCODE, GRADE) %>% summarise(number = n()) %>% 
+  group_by(ZIPCODE) %>% mutate(percent = 100 * number / sum(number))
+
+res_gazip <- filter(res_gzip, GRADE == "A")[, c(1, 4)]
+colnames(res_gazip) <- c("region", "value")
+res_gazip$region <- as.character(res_gazip$region)
+
+g2 <- zip_choropleth(res_gazip,
+               county_zoom = nyc_fips,
+               title      = "Percent of Grade A restaurants in NYC",
+               legend     = "Percent")
+g2<-ggplotly(g2)
+
+res_gzip_man <-
+  res_one %>% filter(GRADE == c("A", "B", "C")) %>% filter(BORO == "MANHATTAN") %>%
+  group_by(ZIPCODE, GRADE) %>% summarise(number = n()) %>% group_by(ZIPCODE) %>% 
+  mutate(percent = 100 * number / sum(number))
+
+res_gazip_man <- filter(res_gzip_man, GRADE == "A")[, c(1, 4)]
+colnames(res_gazip_man) <- c("region", "value")
+res_gazip_man$region <- as.character(res_gazip_man$region)
+
+
+g3 <- zip_choropleth(
+  res_gazip_man,
+  county_zoom = 36061,
+  title      = "Percent of Grade A restaurants in Manhattan",
+  legend     = "Percent"
+)
+g3<-ggplotly(g3)
+ggplotly(g1)
+```
+
+From plot, Caribbean cuisine has least percentage of grade A restaurants and most grade B restaurants. Cafes and Americans has the highest percentage of grade As. Latin restaurants has the highest percentage of Grade C restaurants.
+
+Using percentage of grade A as a scoring system, we can also check how well the restaurants in a certain neighborhood are doing. The plot below shows the percentage of grade A as a heatmap in NYC.
+
+
+```{r warning=FALSE,message=FALSE}
+g2
+g3
+```
+
+The plot does not show any interesting patterns by itself. Areas with deep colors are spread out, and it’s hard to conclude if there’s a large area with very high percentage of grade A. Note that the scale is not evenly distributed, so an area with pale blue does not mean it's an area with lwo A%. They are still decent, but not as good as the best ones.
+
+## Grading of a restaurant
+
+The grading of each restaurant is determined by score deducted during inspection. 0-13 = A, 14-27 = B, 28+ = C. That is to say, two grade A restaurants could be very different in points being deducted. Therefore, we created a plot with top 9 cuisine types and their score distribution.
+
+```{r warning=FALSE,message=FALSE}
+res_cuisine9 <-
+  res %>%  filter(`CUISINE DESCRIPTION` == top9.type) %>% filter(GRADE==c("A","B","C")) 
+library("ggridges")
+
+r1 <- ggplot(res_cuisine9,
+       aes(x = SCORE, y = `CUISINE DESCRIPTION`, fill = `CUISINE DESCRIPTION`)) +
+  geom_density_ridges(scale = 2, alpha = 0.5) + xlim(0, 35) +
+  labs(x = "Scores deducted", y = "Cuisine Types") +
+  ggtitle("")
+
+r2 <- ggplot(res_cuisine9,
+       aes(x = SCORE, y = `CUISINE DESCRIPTION`, fill = GRADE)) +
+  geom_density_ridges(scale = 1, alpha = 0.5) + xlim(0, 35) +
+  labs(x = "Scores deducted", y = "Cuisine Types") +
+  ggtitle("")
+
+r1
+```
+
+From plot, it’s clear to see that most of the scores laid in the area of 0-13. Interestingly, the peak for each cuisine type is not 7.5, but rather close to the cut-off point of grade A and B. It indicates that, lots of grade A restaurants could be grade B instead. Maybe these restaurants get lucky, or it’s the mercy of the inspectors, or it could be some other reasons that we do not know.  To get more information about scoring and grades, we plotted another graph.
+
+```{r warning=FALSE,message=FALSE}
+r2
+```
+
+The distribution of grade A scores has a mode at above 10, which matches previous findings, and grade B’s have a non-surprising distribution. But there is some irregularity in the distribution of C’s. There are some grade C restaurants with low point deduction. These “outliers” appeared in Pizza, Mexican, Japanese restaurants, and bakeries. 
+
+##Interactive Component
+
+Here are links to our two interactive plots:
+
+Interactive plot 1: https://bl.ocks.org/wb2326/b093a583e879ac09c54455d370c80fe3
+
+The interactive plot shows how violations are distributed depending on borough.
+
+The default is set to Bronx. You can also click on other borough names to checkout the corresponding distribution.
+
+Interactive plot 2: https://bl.ocks.org/wb2326/cf672fe68a75fac6e26cb9f1baf1f053
+
+This webpage is to act as an interactive dashboard containng a bar chart, a pie chart, and a table that users can use to learn about how violations correlated with boroughs.
+
+By default, the bar chart shows the sum of segments by violation types as the height of each bar, and pie chart shows the percentage of total violations in each borough.
+
+# Conclusion
+
+Through these plots, we have many interesting findings: cuisine types with the greatest number of restaurants across boroughs in NYC, where to find unknown Mexican food, top 10 health inspection violations, the weird distribution of inspection scores, etc. With all the information provided above, it is definitely necessary for us to check the inspection grades: to see what score it gets, to see what it violates, and to see when the grading was. Overall, this project might provide you some guidance when you’re thinking of eating in a restaurant in NYC. 
+
+The data we found from Open Data NYC is a very thorough dataset, and provided many insights. However, when doing exploratory data analysis, we noticed some errors in the data. For example, for a chain restaurant, names of different branches are not always the same. Popeyes is a chained southern style fast food restaurant, but somehow in the dataset, there're several restaurants with the word "Popeye" inside, and they appeared to be the same restaurant. On the other hand, there are chain restaurants being classified as different cuisine types as well. The labelling process contains many mistakes, which might be a potential weakness.
+
+There’s much more we can investigate, for example, the relationship between specific cuisine type restaurant distribution and demographics, and the reason for restaurants getting grade C without losing many points.
