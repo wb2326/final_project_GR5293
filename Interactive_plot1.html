@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+
+<!-- Load d3.js -->
+<script src="http://d3js.org/d3.v4.js"></script>
+
+<!-- Color scale -->
+<script src="https://d3js.org/d3-scale-chromatic.v1.min.js"></script>
+
+<!-- Add 5 buttons for each BORO-->
+<button onclick="update(data1)">Bronx</button>
+<button onclick="update(data2)">Manhattan</button>
+<button onclick="update(data3)">Brooklyn</button>
+<button onclick="update(data4)">Queens</button>
+<button onclick="update(data5)">Staten Island</button>
+
+<!-- Create a div where the graph will take place -->
+<div id="my_dataviz"></div>
+
+<script>
+
+// set the dimensions and margins of the graph
+var width = 950
+    height = 450
+    margin = 40
+
+// The radius of the pieplot is half the width or half the height (smallest one). I substract a bit of margin.
+var radius = Math.min(width, height) / 2 - margin
+
+// append the svg object to the div called 'my_dataviz'
+var svg = d3.select("#my_dataviz")
+  .append("svg")
+  .attr("width", width)
+  .attr("height", height)
+  .append("g")
+  .attr("transform", "translate(" + width / 4 + "," + height / 2 + ")");
+
+// create 5 data_set
+var data1 = {a: 1547, b: 17, c:2915, d:69, e:2196, f:0, g:1698, h:4129};
+var data2 = {a: 6117, b: 103, c:11352, d:330, e:11820, f:2, g:6257, h:18629}
+var data3 = {a: 3972, b: 85, c:7513, d:255, e:7086, f:4, g:4354, h:11723};
+var data4 = {a: 3565, b: 77, c:6882, d:248, e:7172, f:0,g:3699,h:10472};
+var data5 = {a: 586,  b: 10, c:1020, d:40, e:1127, f:0, g:492, h:1682};
+
+// set the color scale
+var color = d3.scaleOrdinal()
+  .domain(["Food temperature", "Raw material","Food preparation & storage/ rats and fly (KLMNO)", "Facilities", "Hygiene", "Interfering duty", "Vermin", "Dining environment"])
+  .range(d3.schemeDark2);
+
+// A function that create / update the plot for a given variable:
+function update(data) {
+
+  // Compute the position of each group on the pie:
+  var pie = d3.pie()
+    .value(function(d) {return d.value; })
+    .sort(function(a, b) { console.log(a) ; return d3.ascending(a.key, b.key);} ) // This make sure that group order remains the same in the pie chart
+  var data_ready = pie(d3.entries(data))
+
+  // map to data
+  var u = svg.selectAll("path")
+    .data(data_ready)
+
+  // Build the pie chart: Basically, each part of the pie is a path that we build using the arc function.
+  u
+    .enter()
+    .append('path')
+    .merge(u)
+    .transition()
+    .duration(1000)
+    .attr('d', d3.arc()
+      .innerRadius(0)
+      .outerRadius(radius)
+    )
+    .attr('fill', function(d){ return(color(d.data.key)) })
+    .attr("stroke", "white")
+    .style("stroke-width", "2px")
+    .style("opacity", 1)
+    
+    
+
+
+    
+
+  // remove the group that is not present anymore
+  u
+    .exit()
+    .remove()
+
+}
+
+    var legendRectSize = 18;                                  // NEW
+    var legendSpacing = 4;  
+    var legend = svg.selectAll('.legend')                     // NEW
+          .data(color.domain())                                   // NEW
+          .enter()                                                // NEW
+          .append('g')                                            // NEW
+          .attr('class', 'legend')                                // NEW
+          .attr('transform', function(d, i) {                     // NEW
+            var height = legendRectSize + legendSpacing;          // NEW
+            var offset =  height * color.domain().length / 2;     // NEW
+            var horz = 12 * legendRectSize;                       // NEW
+            var vert = i * height - offset;                       // NEW
+            return 'translate(' + horz + ',' + vert + ')';        // NEW
+          });                                                     // NEW
+
+        legend.append('rect')                                     // NEW
+          .attr('width', legendRectSize)                          // NEW
+          .attr('height', legendRectSize)                         // NEW
+          .style('fill', color)                                   // NEW
+          .style('stroke', color);                                // NEW
+          
+        legend.append('text')                                     // NEW
+          .attr('x', legendRectSize + legendSpacing)              // NEW
+          .attr('y', legendRectSize - legendSpacing)              // NEW
+          .text(function(d) { return d; });                       // NEW
+
+
+// Initialize the plot with the first dataset
+update(data1)
+
+
+</script>
+
