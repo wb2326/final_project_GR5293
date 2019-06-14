@@ -2,6 +2,8 @@
 
 source of data: https://data.cityofnewyork.us/Health/DOHMH-New-York-City-Restaurant-Inspection-Results/43nn-pn8j
 
+interactive html output: http://rpubs.com/wb2326/Final_Project_GR5293
+
 General Structure:
 
 1. Introduction
