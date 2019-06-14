@@ -20,15 +20,15 @@ General Structure:
   Two parts:
     1. Restaurant genre analysis
       
-      i.1 count of restaurant of different genre
+      1.1 count of restaurant of different genre
       
-      i.2 zip plot
+      1.2 zip plot
 
     2. Violation analysis
       
-      ii.1 Top 10 violation reason
+       2.1 Top 10 violation reason
        
-       ii.1.1 Violation reason by borough
+       2.1.1 Violation reason by borough
       
       2.2 Grade to score (use percentage of A) 
         
